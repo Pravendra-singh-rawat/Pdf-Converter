@@ -1,0 +1,5 @@
+fitz
+pandas
+streamlit
+pdfplumber
+io
