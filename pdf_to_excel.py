@@ -1,184 +1,79 @@
 import streamlit as st
-import pdfplumber
 import pandas as pd
-from io import BytesIO
+import tabula
+import io
 
-# Set page config
-st.set_page_config(page_title="Secure PDF Table Extractor", layout="wide")
+# Page Configuration
+st.set_page_config(page_title="PDF to Excel Converter", page_icon="📊", layout="centered")
 
-# Custom CSS for better design
+# Custom CSS for a polished look
 st.markdown("""
-<style>
+    <style>
     .main {
         background-color: #f8f9fa;
-        font-family: 'Segoe UI', sans-serif;
     }
-    h1 {
-        color: #2c3e50;
-    }
-    .stButton button {
-        background-color: #2980b9;
+    .stButton>button {
+        width: 100%;
+        border-radius: 5px;
+        height: 3em;
+        background-color: #007bff;
         color: white;
-        border-radius: 6px;
-        padding: 10px 20px;
     }
-    .info-box {
-        background-color: #ecf0f1;
-        padding: 15px;
-        border-left: 5px solid #2980b9;
-        margin-bottom: 20px;
-        font-size: 16px;
+    .stDownloadButton>button {
+        width: 100%;
+        border-radius: 5px;
+        background-color: #28a745;
+        color: white;
     }
-    .footer {
-        font-size: 14px;
-        color: gray;
-        text-align: center;
-        margin-top: 50px;
-    }
-</style>
-""", unsafe_allow_html=True)
+    </style>
+    """, unsafe_allow_html=True)
 
-# Header
-st.title("🔐 Secure PDF Table Extractor")
-st.markdown("<p style='font-size:18px;'>Convert PDF tables into Excel — locally, securely, instantly.</p>", unsafe_allow_html=True)
+## Header Section
+st.title("📊 PDF to Excel Converter")
+st.subheader("Extract tables from your PDF files with ease")
+st.write("Upload a PDF file below, and we'll attempt to find and convert the tables into a downloadable Excel sheet.")
 
-# Privacy Banner
-st.markdown('<div class="info-box">⚠️ This app runs entirely locally. No files are uploaded, stored, or shared.</div>', unsafe_allow_html=True)
+---
 
-# Sidebar for settings
-with st.sidebar:
-    st.header("🛠️ Settings")
-    combine_tables = st.checkbox("✅ Combine all selected pages into one sheet", value=True)
-    st.info("Select specific pages below to extract tables from.")
-
-def deduplicate_columns(columns):
-    """Handles duplicate or empty column names."""
-    seen = {}
-    for idx, col in enumerate(columns):
-        if not col or col.strip() == '':
-            col = 'Unnamed'
-        if col in seen:
-            seen[col] += 1
-            columns[idx] = f"{col}_{seen[col]}"
-        else:
-            seen[col] = 1
-    return columns
-
-def is_valid_table(table_data, min_rows=2, min_cols=2):
-    """
-    Heuristic to determine if the extracted content is a valid table.
-    """
-    if not table_data or len(table_data) < min_rows:
-        return False
-
-    col_lengths = [len(row) for row in table_data]
-    majority_length = max(set(col_lengths), key=col_lengths.count)
-    majority_count = col_lengths.count(majority_length)
-
-    if majority_count / len(col_lengths) < 0.7:
-        return False
-
-    if majority_length < min_cols:
-        return False
-
-    return True
-
-
-def extract_tables_from_pdf(file, selected_pages):
-    tables = []
-    with pdfplumber.open(file) as pdf:
-        total_pages = len(pdf.pages)
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-
-        for page_num in range(total_pages):
-            if (page_num + 1) not in selected_pages:
-                continue
-
-            status_text.text(f"🔍 Processing page {page_num + 1}...")
-            try:
-                page = pdf.pages[page_num]
-
-                # Try basic table extraction
-                table = page.extract_table()
-                if not table:
-                    # Fallback strategy: try more aggressive detection
-                    tables_on_page = page.extract_tables({
-                        "vertical_strategy": "lines",
-                        "horizontal_strategy": "text"
-                    })
-                    if tables_on_page:
-                        table = tables_on_page[0]
-
-                if table and is_valid_table(table):
-                    df = pd.DataFrame(table[1:], columns=table[0])
-                    df.columns = deduplicate_columns(df.columns.tolist())
-                    tables.append((page_num + 1, df))
-                else:
-                    st.info(f"❌ Skipped non-table content on page {page_num + 1}")
-            except Exception as e:
-                st.warning(f"⚠️ Could not extract table from page {page_num + 1}: {str(e)}")
-            progress_bar.progress((page_num + 1) / total_pages)
-        status_text.text("✅ Processing complete.")
-    return tables
-
-def convert_to_excel(tables, combine_sheets):
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        if combine_sheets:
-            combined_df = pd.concat([df for _, df in tables], ignore_index=True)
-            combined_df.to_excel(writer, index=False, sheet_name="Combined")
-        else:
-            for page_num, df in tables:
-                sheet_name = f"Page_{page_num}"[:31]
-                df.to_excel(writer, index=False, sheet_name=sheet_name)
-    output.seek(0)
-    return output
-
-# Main logic
-if 'tables' not in st.session_state:
-    st.session_state.tables = []
-
-uploaded_file = st.file_uploader("📂 Upload your PDF file", type="pdf", key="uploader")
+## File Upload Section
+uploaded_file = st.file_uploader("Choose a PDF file", type="pdf")
 
 if uploaded_file is not None:
-    with pdfplumber.open(uploaded_file) as pdf:
-        total_pages = len(pdf.pages)
+    with st.spinner('Analyzing PDF...'):
+        try:
+            # Read PDF tables
+            # multiple_tables=True extracts all tables; pages='all' scans the whole doc
+            tables = tabula.read_pdf(uploaded_file, pages='all', multiple_tables=True)
+            
+            if len(tables) > 0:
+                st.success(f"Found {len(tables)} table(s)!")
+                
+                # Combine tables or let user pick? Here we combine them for simplicity
+                all_tables = pd.concat(tables)
+                
+                # Data Preview
+                st.write("### Preview of Extracted Data")
+                st.dataframe(all_tables.head(10), use_container_width=True)
 
-    st.success(f"📘 Your PDF has **{total_pages} pages**. Select which ones to extract from:")
-    page_options = list(range(1, total_pages + 1))
-    selected_pages = st.multiselect("📌 Choose Pages", options=page_options, default=page_options)
+                # Conversion to Excel Buffer
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                    all_tables.to_excel(writer, index=False, sheet_name='Sheet1')
+                
+                st.download_button(
+                    label="📥 Download Excel File",
+                    data=buffer.getvalue(),
+                    file_name="converted_data.xlsx",
+                    mime="application/vnd.ms-excel"
+                )
+            else:
+                st.warning("No clear tables were found in this PDF. Try a document with a more defined grid structure.")
+                
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
 
-    if st.button("🚀 Start Extraction"):
-        tables = extract_tables_from_pdf(uploaded_file, selected_pages)
-        st.session_state.tables = tables
+else:
+    st.info("Please upload a PDF file to begin.")
 
-        if tables:
-            st.success(f"✅ Successfully extracted tables from **{len(tables)} pages**.")
-
-            # Summary stats
-            total_rows = sum(len(df) for _, df in tables)
-            total_cols = max(len(df.columns) for _, df in tables) if tables else 0
-            st.markdown("📊 **Summary:**")
-            st.markdown(f"- Total Tables Extracted: `{len(tables)}`")
-            st.markdown(f"- Total Rows: `{total_rows}`")
-            st.markdown(f"- Max Columns in Any Table: `{total_cols}`")
-
-            # Preview tables
-            for page_num, df in tables:
-                with st.expander(f"📄 Table from Page {page_num}"):
-                    st.dataframe(df, use_container_width=True)
-
-            excel_data = convert_to_excel(tables, combine_tables)
-
-            st.download_button(
-                label="📥 Download Excel File",
-                data=excel_data,
-                file_name="extracted_tables.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        else:
-            st.error("❌ No valid tables found on the selected pages.")
-
-# Footer
-st.markdown('<div class="footer">Built by [Your Name] - MIS Data Analyst | Internal Use Only</div>', unsafe_allow_html=True)
+---
+st.caption("Built with ❤️ using Streamlit and Tabula")
